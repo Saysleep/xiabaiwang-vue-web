@@ -172,7 +172,9 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import axios from 'axios'
+// ⭐ 核心修改 1：引入封装好的 request，代替原生 axios
+import request from '@/utils/request' 
+
 
 const router = useRouter()
 const nickname = ref(localStorage.getItem('nickname') || '神秘玩家')
@@ -206,7 +208,24 @@ onMounted(() => { fetchSocialData(); fetchPublicRooms(); initGlobalWebSocket() }
 onUnmounted(() => { if (globalWs) globalWs.close() })
 
 const initGlobalWebSocket = () => {
-  globalWs = new WebSocket(`ws://localhost:8080/ws/global/${nickname.value}`)
+  // ⭐ 核心修改 2：取出 token，使用 token 进行 WebSocket 握手
+  const token = localStorage.getItem('xiabaiwang_token')
+  if (!token) {
+    return router.push('/login')
+  }
+
+  // 此处连接地址使用相对路径或统配的 baseURL 地址
+  globalWs = new WebSocket(`ws://localhost:8080/ws/global/${token}`)
+  
+  globalWs.onclose = (event) => {
+    // 监听后端抛出的 VIOLATED_POLICY 错误码（1008），处理鉴权失败情况
+    if (event.code === 1008) {
+      customAlert('登录已过期，请重新登录')
+      localStorage.removeItem('xiabaiwang_token')
+      router.push('/login')
+    }
+  }
+
   globalWs.onmessage = (event) => {
     const data = JSON.parse(event.data)
     if (data.type === 'online_status') onlineStatus[data.user] = data.isOnline
@@ -216,7 +235,6 @@ const initGlobalWebSocket = () => {
       if (chatTarget.value !== data.from) unreadCount[data.from] = (unreadCount[data.from] || 0) + 1
     } 
     else if (data.type === 'invite') {
-      // ⭐ 发放邀请函：被邀者点击，URL带上 ?invite=1，这就是VIP直达通道
       customConfirm(`好友 [${data.from}] 邀请你加入房间 [${data.roomId}]，是否前往？`, () => {
         router.push({ path: `/room/${data.roomId}`, query: { invite: '1' } })
       })
@@ -246,76 +264,84 @@ const inviteRoom = (friend) => {
 }
 const requestJoin = (friend) => { globalWs.send(JSON.stringify({ type: 'request_join', target: friend.nickname })); customAlert('求拉请求已发送！') }
 
+// ⭐ 核心修改 3：移除所有的 headers 手动注入和 data 解构，全部走 request 实例
 const fetchSocialData = async () => {
-  const res = await axios.get('http://localhost:8080/api/friend/list', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } })
-  if (res.data.code === 200) { friends.value = res.data.friends; requests.value = res.data.requests }
+  try {
+    const res = await request.get('/friend/list')
+    friends.value = res.friends || res.data?.friends || [] 
+    requests.value = res.requests || res.data?.requests || []
+  } catch (e) {}
 }
 
 const fetchPublicRooms = async () => {
   try {
-    // ⭐ 之前漏写了这里的 Token，导致大厅直接报错没数据！
-    const res = await axios.get('http://localhost:8080/api/room/list', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } })
-    if (res.data.code === 200) publicRooms.value = res.data.data
-  } catch(e){}
+    const res = await request.get('/room/list')
+    publicRooms.value = res.data || []
+  } catch(e) {}
 }
 
 const searchFriend = async () => {
   if (!targetUsername.value) return customAlert('请输入要搜索的账号！')
   try {
-    const res = await axios.get(`http://localhost:8080/api/friend/search?username=${targetUsername.value}`, { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } })
-    if (res.data.code === 200) searchResultUser.value = res.data.data
-    else customAlert(res.data.msg)
-  } catch(e){ customAlert('网络请求异常') }
+    const res = await request.get(`/friend/search?username=${targetUsername.value}`)
+    searchResultUser.value = res.data
+  } catch(e){ 
+    // 错误在拦截器中已经可以统一处理，这里的 catch 可留作特定的 UI 异常兜底
+  }
 }
+
 const confirmApplyFriend = async () => {
   const currentTarget = searchResultUser.value.username; searchResultUser.value = null
-  const res = await axios.post('http://localhost:8080/api/friend/apply', { username: currentTarget }, { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } })
-  customAlert(res.data.msg); targetUsername.value = ''
-  if (globalWs && res.data.code === 200) globalWs.send(JSON.stringify({ type: 'social_update', target: currentTarget }))
+  try {
+    const res = await request.post('/friend/apply', { username: currentTarget })
+    customAlert(res.message || '申请已发送')
+    targetUsername.value = ''
+    if (globalWs) globalWs.send(JSON.stringify({ type: 'social_update', target: currentTarget }))
+  } catch (e) {}
 }
+
 const handleApply = async (applyId, agree, targetNickname) => {
-  await axios.post('http://localhost:8080/api/friend/handle', { applyId, agree }, { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } })
-  fetchSocialData()
-  if (globalWs) globalWs.send(JSON.stringify({ type: 'social_update', target: targetNickname }))
+  try {
+    await request.post('/friend/handle', { applyId, agree })
+    fetchSocialData()
+    if (globalWs) globalWs.send(JSON.stringify({ type: 'social_update', target: targetNickname }))
+  } catch (e) {}
 }
+
 const deleteFriend = (friend) => {
   customConfirm(`确定删除好友 [${friend.nickname}] 吗？`, async () => {
-    await axios.post('http://localhost:8080/api/friend/delete', { username: friend.username }, { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } })
-    fetchSocialData()
-    if (globalWs) globalWs.send(JSON.stringify({ type: 'social_update', target: friend.nickname }))
+    try {
+      await request.post('/friend/delete', { username: friend.username })
+      fetchSocialData()
+      if (globalWs) globalWs.send(JSON.stringify({ type: 'social_update', target: friend.nickname }))
+    } catch (e) {}
   })
 }
 
 const submitCreateRoom = async () => {
   if (roomSetting.isPrivate && !roomSetting.password.trim()) return customAlert('私密房间必须设置密码！')
-  const res = await axios.post('http://localhost:8080/api/room/create', { ...roomSetting, nickname: nickname.value }, { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } })
-  if (res.data.code === 200) {
-    localStorage.setItem('currentRoom', res.data.data.roomId)
-    sessionStorage.setItem(`access_${res.data.data.roomId}`, '1') // ⭐ 自己建房，发放本地通行证
-    router.push(`/room/${res.data.data.roomId}`) 
-  }
+  try {
+    const res = await request.post('/room/create', { ...roomSetting, nickname: nickname.value })
+    // 如果走到这行，拦截器已经判断 code === 200
+    const newRoomId = res.data.roomId || res.roomId || res.data
+    localStorage.setItem('currentRoom', newRoomId)
+    sessionStorage.setItem(`access_${newRoomId}`, '1')
+    router.push(`/room/${newRoomId}`) 
+  } catch (e) {}
 }
 
-// ⭐ 核心防御：无论通过卡片点还是搜号码，加入逻辑全重构
 const joinRoom = async (id, isPrivate = false) => { 
   if (!id) return
   id = id.toUpperCase()
   let targetRoom = publicRooms.value.find(r => r.roomId === id)
   let isTargetPrivate = isPrivate || (targetRoom && targetRoom.isPrivate)
 
-  // 如果搜的房间号在大厅列表里没找到，可能是私密房（或者是错的号），去后端查！
   if (!targetRoom) {
      try {
-        const infoRes = await axios.get(`http://localhost:8080/api/room/info?roomId=${id}`, {
-            headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } // 补上Token
-        })
-        if (infoRes.data.code === 200) {
-            isTargetPrivate = infoRes.data.isPrivate
-        } else {
-            return customAlert(infoRes.data.msg || '房间不存在或已在游戏中！')
-        }
+        const res = await request.get(`/room/info?roomId=${id}`)
+        isTargetPrivate = res.data.isPrivate || res.isPrivate
      } catch(e) {
-        return customAlert('获取房间信息失败！')
+        return // 错误弹窗交给了全局拦截器
      }
   }
 
@@ -323,18 +349,18 @@ const joinRoom = async (id, isPrivate = false) => {
     customPrompt('该房间为私密状态，请输入密码：', async (pwd) => {
       if (!pwd) return customAlert('密码不能为空！') 
       try {
-        const res = await axios.post('http://localhost:8080/api/room/verify', { roomId: id, password: pwd }, { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } })
-        if (res.data.code === 200) {
-          localStorage.setItem('currentRoom', id)
-          sessionStorage.setItem(`access_${id}`, '1') // ⭐ 验密成功，发放通行证
-          router.push(`/room/${id}`) 
-        } else { customAlert(res.data.msg) }
-      } catch(e) { customAlert('密码验证异常') }
+        await request.post('/room/verify', { roomId: id, password: pwd })
+        // 验证成功
+        localStorage.setItem('currentRoom', id)
+        sessionStorage.setItem(`access_${id}`, '1')
+        router.push(`/room/${id}`) 
+      } catch(e) { 
+        // 密码错误等业务异常在拦截器处理
+      }
     })
     return
   }
   
-  // 公开房直接进，发放通行证
   localStorage.setItem('currentRoom', id)
   sessionStorage.setItem(`access_${id}`, '1')
   router.push(`/room/${id}`) 
@@ -344,6 +370,7 @@ const handleLogout = () => { customConfirm('确定要退出当前账号吗？', 
 </script>
 
 <style scoped>
+/* 样式部分保持不变 */
 .lobby-container { min-height: 100vh; background: #1a252f; color: white; display: flex; flex-direction: column; position: relative;}
 .header { display: flex; justify-content: space-between; padding: 15px 40px; background: #2c3e50; border-bottom: 2px solid #000; }
 .brand { font-size: 24px; font-weight: bold; }
@@ -390,7 +417,6 @@ const handleLogout = () => { customConfirm('确定要退出当前账号吗？', 
 .btn-join-card { background: #27ae60; color: white; border: none; padding: 10px; border-radius: 6px; font-weight: bold; cursor: pointer; width: 100%; margin-top: auto;}
 .btn-join-private { background: #c0392b; color: white; border: none; padding: 10px; border-radius: 6px; font-weight: bold; cursor: pointer; width: 100%; margin-top: auto;}
 
-/* UI 弹窗系统样式 */
 .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .modal-box { background: #ecf0f1; color: #2c3e50; padding: 30px; border-radius: 12px; width: 400px; }
 .modal-box h3 { margin-top: 0; text-align: center; margin-bottom: 20px;}
@@ -398,12 +424,10 @@ const handleLogout = () => { customConfirm('确定要退出当前账号吗？', 
 .form-group input, .form-group select { padding: 8px; border: 1px solid #bdc3c7; border-radius: 4px; width: 200px; }
 .modal-actions { display: flex; justify-content: space-between; margin-top: 30px; }
 
-/* 玩家名片特有样式 */
 .user-card { text-align: center; }
 .card-avatar { font-size: 60px; margin-bottom: 10px; }
 .card-score { color: #e67e22; font-weight: bold; font-size: 18px; margin-top: 10px; }
 
-/* 中央通用弹窗 */
 .custom-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 9999; }
 .custom-modal { background: #2c3e50; padding: 30px; border-radius: 12px; width: 340px; text-align: center; border: 2px solid #3498db; color: white; box-shadow: 0 10px 30px rgba(0,0,0,0.5);}
 .modal-msg { margin: 20px 0; font-size: 16px; line-height: 1.5; color: #ecf0f1;}

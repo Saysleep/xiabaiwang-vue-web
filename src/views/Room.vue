@@ -98,7 +98,6 @@
         </div>
       </div>
 
-      <!-- ⭐ 好友面板，去掉那句累赘字 -->
       <div class="friends-drawer" v-if="showFriendsDrawer">
          <div class="drawer-header">
             <span>好友列表</span>
@@ -125,7 +124,6 @@
         <div class="chat-input"><input v-model="chatInput" @keyup.enter="sendChat" placeholder="回车发送..." /></div>
       </div>
 
-      <!-- ⭐ 中央弹窗系统 (Alert, Confirm) -->
       <div v-if="ui.visible" class="custom-modal-overlay">
         <div class="custom-modal">
           <h3 v-if="ui.title">{{ ui.title }}</h3>
@@ -136,7 +134,6 @@
           </div>
         </div>
       </div>
-
     </main>
   </div>
 </template>
@@ -144,7 +141,8 @@
 <script setup>
 import { ref, onMounted, onUnmounted, reactive, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import axios from 'axios'
+// ⭐ 核心修改 1：引入 request 工具包
+import request from '@/utils/request'
 
 const route = useRoute()
 const router = useRouter()
@@ -192,7 +190,19 @@ const customAlert = (msg, title = '提示') => { ui.type = 'alert'; ui.title = t
 const customConfirm = (msg, cbConfirm, title = '系统确认') => { ui.type = 'confirm'; ui.title = title; ui.msg = msg; ui.visible = true; ui.onConfirm = () => { ui.visible = false; cbConfirm() }; ui.onCancel = () => { ui.visible = false } }
 
 const initGlobalWebSocket = () => {
-  globalWs = new WebSocket(`ws://localhost:8080/ws/global/${nickname.value}`)
+  const token = localStorage.getItem('xiabaiwang_token')
+  if (!token) return router.push('/login')
+
+  // ⭐ 核心修改 2：大厅引擎鉴权
+  globalWs = new WebSocket(`ws://localhost:8080/ws/global/${token}`)
+  
+  globalWs.onclose = (event) => {
+    if (event.code === 1008) {
+      localStorage.removeItem('xiabaiwang_token')
+      router.push('/login')
+    }
+  }
+
   globalWs.onmessage = (event) => {
     const data = JSON.parse(event.data)
     if (data.type === 'online_status') onlineStatus[data.user] = data.isOnline
@@ -215,10 +225,11 @@ const initGlobalWebSocket = () => {
   }
 }
 
+// ⭐ 核心修改 3：移除了冗余的 headers 和状态判断
 const fetchGlobalFriends = async () => {
   try {
-    const res = await axios.get('http://localhost:8080/api/friend/list', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('token') } })
-    if (res.data.code === 200) globalFriends.value = res.data.friends
+    const res = await request.get('/friend/list')
+    globalFriends.value = res.friends || res.data?.friends || []
   } catch(e){}
 }
 
@@ -253,10 +264,7 @@ const stopTimer = () => { if (timerId) clearInterval(timerId) }
 onMounted(async () => {
   roomId.value = route.params.id
 
-  // ⭐ ⭐ 终极准入守卫 (Fail-Closed) ⭐ ⭐
-  // 放行条件一：你是被好友邀请的 VIP (?invite=1)
   const isInvited = route.query.invite === '1'
-  // 放行条件二：你在大厅正确走了流程、或者输对了密码，拿到了通行证
   const hasAccess = sessionStorage.getItem(`access_${roomId.value}`) === '1'
   
   if (!isInvited && !hasAccess) {
@@ -264,12 +272,24 @@ onMounted(async () => {
       return router.push('/lobby')
   }
 
-  // 受邀进来的玩家，给他补发一张本地通行证，保证他在房里按 F5 刷新时不会被踢出去
   if (isInvited) sessionStorage.setItem(`access_${roomId.value}`, '1')
 
   initGlobalWebSocket()
   fetchGlobalFriends()
-  ws = new WebSocket(`ws://localhost:8080/ws/room/${roomId.value}/${nickname.value}`)
+
+  // ⭐ 核心修改 4：局内引擎鉴权
+  const token = localStorage.getItem('xiabaiwang_token')
+  if (!token) return router.push('/login')
+  
+  ws = new WebSocket(`ws://localhost:8080/ws/room/${roomId.value}/${token}`)
+
+  ws.onclose = (event) => {
+    if (event.code === 1008) {
+      customAlert('登录状态已失效，请重新登录。')
+      localStorage.removeItem('xiabaiwang_token')
+      router.push('/login')
+    }
+  }
 
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data)
@@ -335,7 +355,7 @@ const leaveRoomDirect = () => { router.push('/lobby') }
 </script>
 
 <style scoped>
-/* 原有布局样式完全保留 */
+/* 样式保持不变 */
 .room-container { height: 100vh; display: flex; flex-direction: column; background-color: #1a252f; position: relative;}
 .room-header { display: flex; justify-content: space-between; padding: 15px 20px; background-color: #2c3e50; border-bottom: 2px solid #000; align-items: center;}
 .room-id { font-size: 20px; font-weight: bold; color: #f1c40f; }
@@ -344,9 +364,7 @@ const leaveRoomDirect = () => { router.push('/lobby') }
 .btn-friends { background: #9b59b6; color: white; border: none; padding: 6px 15px; border-radius: 4px; cursor: pointer; font-weight: bold;}
 .btn-leave { background: #c0392b; color: white; border: none; padding: 6px 15px; border-radius: 4px; cursor: pointer; font-weight: bold;}
 .playing-status { color: #e74c3c; font-weight: bold; }
-
 .game-board { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; overflow: hidden; }
-
 .friends-drawer { position: absolute; right: 0; top: 0; height: 100%; width: 260px; background: #2c3e50; border-left: 2px solid #34495e; z-index: 100; display: flex; flex-direction: column; padding: 15px; box-sizing: border-box; box-shadow: -5px 0 20px rgba(0,0,0,0.5); }
 .drawer-header { display: flex; justify-content: space-between; align-items: center; color: white; border-bottom: 1px solid #7f8c8d; padding-bottom: 15px; margin-bottom: 15px; font-weight: bold;}
 .drawer-close { cursor: pointer; color: #e74c3c; font-size: 12px; }
@@ -354,7 +372,6 @@ const leaveRoomDirect = () => { router.push('/lobby') }
 .friend-item-room:hover { background: rgba(255,255,255,0.1); }
 .online { color: #2ecc71; font-weight: bold; }
 .btn-invite-room { background: #3498db; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;}
-
 .my-identity-panel { position: absolute; top: 20px; right: 280px; background: rgba(44, 62, 80, 0.9); padding: 15px; border-radius: 8px; border: 2px solid #3498db; width: 220px; z-index: 50; }
 .my-role-info { color: white; font-size: 18px; font-weight: bold; margin-bottom: 8px; }
 .role-text { padding: 0 5px; }
@@ -362,7 +379,6 @@ const leaveRoomDirect = () => { router.push('/lobby') }
 .bluff-tips-mini { color: #e74c3c; font-size: 13px; border-top: 1px dashed #7f8c8d; padding-top: 8px; }
 .smart-tips-mini { color: #9b59b6; font-size: 13px; border-top: 1px dashed #7f8c8d; padding-top: 8px; }
 .txt-honest { color: #2ecc71; } .txt-smart { color: #9b59b6; } .txt-bluffer { color: #e74c3c; }
-
 .table { width: 60%; height: 35%; background: #27ae60; border-radius: 100px; border: 10px solid #16a085; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .table-text { color: rgba(255,255,255,0.8); font-size: 32px; letter-spacing: 5px; }
 .waiting-text { color: rgba(255,255,255,0.7); font-size: 18px; margin: 5px 0; }
@@ -371,14 +387,11 @@ const leaveRoomDirect = () => { router.push('/lobby') }
 .my-turn { color: #f1c40f; text-shadow: 0 0 10px #f1c40f; }
 .timer { font-size: 20px; color: #e74c3c; font-weight: bold; margin-top: 15px; animation: pulse 1s infinite; }
 @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
-
 .log-board { position: absolute; top: 20px; left: 20px; background: rgba(0,0,0,0.6); padding: 15px; border-radius: 8px; width: 300px; color: #bdc3c7; font-size: 14px; }
 .log-item { margin: 5px 0; border-bottom: 1px dashed #7f8c8d; padding-bottom: 5px; }
-
 .player-zone { position: absolute; bottom: 10px; display: flex; flex-direction: column; align-items: center; gap: 15px; width: 100%; }
 .players-container { display: flex; gap: 30px; justify-content: center; align-items: flex-start; }
 .player-wrapper { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 150px; }
-
 .player-avatar { position: relative; background: #34495e; padding: 10px; border-radius: 12px; font-size: 15px; border: 2px solid #34495e; color: white; text-align: center; width: 100%; box-sizing: border-box; }
 .player-score { color: #f1c40f; font-size: 12px; margin-top: 5px; }
 .active-player { border-color: #f1c40f !important; box-shadow: 0 0 15px #f1c40f; }
@@ -387,13 +400,11 @@ const leaveRoomDirect = () => { router.push('/lobby') }
 .role-badge { position: absolute; top: -15px; left: 50%; transform: translateX(-50%); background: #9b59b6; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: bold; white-space: nowrap; }
 .host-badge { background: #e67e22; }
 .ready-icon { position: absolute; top: -10px; right: -10px; font-size: 20px; }
-
 .host-actions { display: flex; gap: 5px; margin-top: 5px; width: 100%;}
 .btn-kick { flex: 1; background: #c0392b; color: white; border: none; border-radius: 4px; font-size: 12px; padding: 4px; cursor: pointer;}
 .btn-transfer { flex: 1; background: #f39c12; color: white; border: none; border-radius: 4px; font-size: 12px; padding: 4px; cursor: pointer;}
 .speech-bubble { background: white; color: black; padding: 8px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; text-align: left; word-break: break-all; position: relative; }
 .speech-bubble::before { content: ""; position: absolute; top: -10px; left: 50%; transform: translateX(-50%); border-width: 5px; border-style: solid; border-color: transparent transparent white transparent; }
-
 .judge-actions { display: flex; flex-direction: column; gap: 5px; width: 100%; }
 .btn-skill-mini { background: #c0392b; color: white; border: none; padding: 5px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s; }
 .btn-skill-mini:hover { background: #e74c3c; }
@@ -401,12 +412,10 @@ const leaveRoomDirect = () => { router.push('/lobby') }
 .btn-guess-mini { background: #27ae60; color: white; border: none; padding: 5px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s; }
 .btn-guess-mini:hover { background: #2ecc71; }
 .btn-ready { background: #e67e22; color: white; font-size: 20px; padding: 10px 40px; border: none; border-radius: 30px; cursor: pointer; }
-
 .action-panel { background: #2c3e50; padding: 15px; border-radius: 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; width: 400px; border: 2px solid #3498db; }
 .input-group { display: flex; flex-direction: column; gap: 10px; width: 100%; }
 textarea { width: 100%; height: 60px; padding: 8px; border-radius: 6px; box-sizing: border-box; resize: none; font-family: inherit; }
 .btn-submit { background: #3498db; color: white; border: none; padding: 10px; border-radius: 6px; font-weight: bold; cursor: pointer; }
-
 .game-over-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.85); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .game-over-box { background: #2c3e50; padding: 30px; border-radius: 12px; border: 2px solid #f1c40f; width: 500px; color: white; text-align: center; }
 .result-title { color: #f1c40f; margin-bottom: 25px; font-size: 24px; }
@@ -418,7 +427,6 @@ textarea { width: 100%; height: 60px; padding: 8px; border-radius: 6px; box-sizi
 .game-over-actions { display: flex; gap: 20px; justify-content: center; }
 .btn-play-again { background: #27ae60; color: white; border: none; padding: 12px 25px; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer; }
 .btn-leave-room { background: #c0392b; color: white; border: none; padding: 12px 25px; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer; }
-
 .chat-box { position: fixed; bottom: 20px; right: 280px; width: 300px; height: 350px; background: #ecf0f1; border-radius: 8px 8px 0 0; display: flex; flex-direction: column; box-shadow: 0 -5px 20px rgba(0,0,0,0.5); z-index: 200;}
 .chat-header { background: #3498db; color: white; padding: 10px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; font-weight: bold; }
 .close-chat { cursor: pointer; }
@@ -429,8 +437,6 @@ textarea { width: 100%; height: 60px; padding: 8px; border-radius: 6px; box-sizi
 .chat-input { padding: 10px; border-top: 1px solid #bdc3c7; }
 .chat-input input { width: 100%; padding: 8px; border: 1px solid #95a5a6; border-radius: 15px; outline: none; box-sizing: border-box; }
 .unread-dot { background: #e74c3c; padding: 2px 6px; border-radius: 10px; font-size: 12px; color: white; margin-left: 5px; }
-
-/* 中央通用弹窗 */
 .custom-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 9999; }
 .custom-modal { background: #2c3e50; padding: 30px; border-radius: 12px; width: 340px; text-align: center; border: 2px solid #3498db; color: white; box-shadow: 0 10px 30px rgba(0,0,0,0.5);}
 .modal-msg { margin: 20px 0; font-size: 16px; line-height: 1.5; color: #ecf0f1;}
