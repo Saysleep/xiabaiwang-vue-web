@@ -205,6 +205,8 @@ const saveAuthAndRedirect = (data) => {
   localStorage.setItem('xiabaiwang_token', data.token || data)
   if (data.nickname) localStorage.setItem('nickname', data.nickname)
   if (data.score !== undefined) localStorage.setItem('score', data.score)
+  if (data.userId) localStorage.setItem('userId', data.userId)
+  if (data.username) localStorage.setItem('username', data.username)
   router.push('/lobby')
 }
 </script>
