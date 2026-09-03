@@ -141,7 +141,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, reactive, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-// ⭐ 核心修改 1：引入 request 工具包
 import request from '@/utils/request'
 
 const route = useRoute()
@@ -193,8 +192,8 @@ const initGlobalWebSocket = () => {
   const token = localStorage.getItem('xiabaiwang_token')
   if (!token) return router.push('/login')
 
-  // ⭐ 核心修改 2：大厅引擎鉴权
-  globalWs = new WebSocket(`ws://localhost:8080/ws/global/${token}`)
+  const host = window.location.host
+  globalWs = new WebSocket(`ws://${host}/ws/global/${token}`)
   
   globalWs.onclose = (event) => {
     if (event.code === 1008) {
@@ -225,7 +224,6 @@ const initGlobalWebSocket = () => {
   }
 }
 
-// ⭐ 核心修改 3：移除了冗余的 headers 和状态判断
 const fetchGlobalFriends = async () => {
   try {
     const res = await request.get('/friend/list')
@@ -277,11 +275,11 @@ onMounted(async () => {
   initGlobalWebSocket()
   fetchGlobalFriends()
 
-  // ⭐ 核心修改 4：局内引擎鉴权
   const token = localStorage.getItem('xiabaiwang_token')
   if (!token) return router.push('/login')
   
-  ws = new WebSocket(`ws://localhost:8080/ws/room/${roomId.value}/${token}`)
+  const host = window.location.host
+  ws = new WebSocket(`ws://${host}/ws/room/${roomId.value}/${token}`)
 
   ws.onclose = (event) => {
     if (event.code === 1008) {
@@ -355,7 +353,7 @@ const leaveRoomDirect = () => { router.push('/lobby') }
 </script>
 
 <style scoped>
-/* 样式保持不变 */
+/* 原有 PC 基础样式保持不变 */
 .room-container { height: 100vh; display: flex; flex-direction: column; background-color: #1a252f; position: relative;}
 .room-header { display: flex; justify-content: space-between; padding: 15px 20px; background-color: #2c3e50; border-bottom: 2px solid #000; align-items: center;}
 .room-id { font-size: 20px; font-weight: bold; color: #f1c40f; }
@@ -443,4 +441,41 @@ textarea { width: 100%; height: 60px; padding: 8px; border-radius: 6px; box-sizi
 .modal-actions-center { display: flex; gap: 15px; justify-content: center; }
 .btn-cancel { background: #95a5a6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold;}
 .btn-confirm-green { background: #27ae60; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold;}
+
+/* ====== 移动端适配专属媒体查询 ====== */
+@media screen and (max-width: 768px) {
+  /* 头部区域折叠显示 */
+  .room-header { flex-direction: column; gap: 12px; padding: 12px; }
+  .header-actions { width: 100%; justify-content: space-around; }
+
+  /* 游戏主舞台：取消绝对定位与遮挡，允许上下滚动 */
+  .game-board { justify-content: flex-start; padding-top: 10px; overflow-y: auto; }
+
+  /* 日志板：取消绝对悬浮，融入文档流 */
+  .log-board { position: relative; top: 0; left: 0; width: 90%; margin-bottom: 10px; padding: 10px; box-sizing: border-box; }
+
+  /* 身份提示板：居于屏幕上方可视区 */
+  .my-identity-panel { position: relative; top: 0; right: 0; width: 90%; margin-bottom: 15px; padding: 10px; box-sizing: border-box; }
+
+  /* 游戏桌：按比例铺满手机屏幕 */
+  .table { width: 90%; height: auto; padding: 25px 0; border-width: 5px; border-radius: 20px; min-height: 140px; }
+  .table-text { font-size: 24px; }
+  .turn-indicator { font-size: 20px; }
+
+  /* 玩家头像区：弹性换行，避免拥挤 */
+  .player-zone { position: relative; bottom: 0; margin-top: 20px; width: 100%; padding-bottom: 30px; }
+  .players-container { flex-wrap: wrap; gap: 10px; padding: 0 10px; justify-content: center; }
+  .player-wrapper { width: 30%; min-width: 100px; }
+  .player-avatar { font-size: 13px; padding: 8px 5px; }
+
+  /* 操作与弹窗面板：放弃固定像素尺寸 */
+  .action-panel { width: 90%; padding: 12px; box-sizing: border-box; }
+  .game-over-box { width: 90%; padding: 20px; box-sizing: border-box; }
+  .result-content { flex-direction: column; gap: 20px; }
+  .custom-modal { width: 85%; }
+
+  /* 侧边栏与聊天：铺满或居中 */
+  .friends-drawer { width: 100%; border-left: none; }
+  .chat-box { right: 50%; transform: translateX(50%); width: 95%; bottom: 10px; height: 45vh; }
+}
 </style>

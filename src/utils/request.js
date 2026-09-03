@@ -3,8 +3,7 @@ import { useRouter } from 'vue-router'; // 假设使用 vue-router
 
 // 创建 Axios 实例
 const request = axios.create({
-  // 把原来的 '/api' 改成完整的后端本机地址
-  baseURL: 'http://localhost:8080/api', 
+  baseURL: '/api', 
   timeout: 10000
 });
 

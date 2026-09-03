@@ -3,7 +3,8 @@ export class GameSocketService {
     this.globalWs = null;
     this.roomWs = null;
     // 替换为你的后端实际地址
-    this.baseUrl = 'ws://localhost:8080/ws'; 
+    const host = window.location.host
+    this.baseUrl = `ws://${host}/ws`; 
   }
 
   // 连接大厅全局 Socket

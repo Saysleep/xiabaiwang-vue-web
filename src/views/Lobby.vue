@@ -159,8 +159,8 @@
 
     <!-- ⭐ 个人资料与编辑弹窗 -->
     <div v-if="myProfileVisible" class="modal-overlay">
-      <div class="modal-box user-card" style="text-align: left; width: 380px;">
-        <h3 style="text-align: center; border-bottom: 1px dashed #7f8c8d; padding-bottom: 15px; margin-bottom: 20px;">
+    <div class="modal-box user-card" style="text-align: left;">
+          <h3 style="text-align: center; border-bottom: 1px dashed #7f8c8d; padding-bottom: 15px; margin-bottom: 20px;">
           {{ isEditing ? '✏️ 编 辑 资 料' : '🪪 个 人 资 料' }}
         </h3>
         
@@ -260,7 +260,7 @@
     </div>
     <!-- 好友详细资料弹窗 -->
     <div v-if="friendProfileVisible" class="modal-overlay">
-      <div class="modal-box user-card" style="text-align: left; width: 380px;">
+      <div class="modal-box user-card" style="text-align: left;">
         <h3 style="text-align: center; border-bottom: 1px dashed #7f8c8d; padding-bottom: 15px; margin-bottom: 20px;">
           🪪 好 友 资 料
         </h3>
@@ -451,7 +451,9 @@ const initGlobalWebSocket = () => {
   const token = localStorage.getItem('xiabaiwang_token')
   if (!token) return router.push('/login')
 
-  globalWs = new WebSocket(`ws://localhost:8080/ws/global/${token}`)
+  // 获取当前浏览器地址栏的 IP 或域名
+  const host = window.location.host
+  globalWs = new WebSocket(`ws://${host}/ws/global/${token}`)
   
   globalWs.onclose = (event) => {
     if (event.code === 1008) {
@@ -803,5 +805,35 @@ const handleLogout = () => { customConfirm('确定要退出当前账号吗？', 
 .msg-delete { margin-left: 10px; cursor: pointer; opacity: 0.6; font-size: 12px; transition: 0.2s;}
 .msg-delete:hover { opacity: 1; transform: scale(1.1); }
 .empty-msg { text-align: center; color: #7f8c8d; font-size: 13px; margin-top: 20px; }
+/* ====== 移动端大厅专属媒体查询 ====== */
+@media screen and (max-width: 768px) {
+  /* 恢复外层容器的滚动能力 */
+  .lobby-container, .main-content { overflow-y: auto; overflow-x: hidden; }
+  
+  /* 将原本横向并排的三列强制改为上下堆叠 */
+  .main-content { flex-direction: column; padding: 10px; gap: 15px; }
+  
+  /* 解除各面板的固定宽度，让其占满手机屏幕 */
+  .social-panel, .action-board, .message-panel { width: 100%; height: auto; min-height: 400px; padding: 15px; box-sizing: border-box; }
+  
+  /* 缩小头部两侧的留白 */
+  .header { padding: 15px 15px; }
+  .brand { font-size: 20px; }
+  
+  /* 强制房间卡片在手机上单列显示 */
+  .room-grid { grid-template-columns: 1fr; }
+  
+  /* 修复弹窗在手机上超出屏幕的问题 */
+  .modal-box, .custom-modal { width: 90%; padding: 20px; box-sizing: border-box; }
+  .form-group { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .form-group input, .form-group select { width: 100%; box-sizing: border-box; }
+  
+  /* 聊天悬浮框水平居中 */
+  .chat-box { right: 50%; transform: translateX(50%); width: 95%; bottom: 10px; height: 50vh; }
+  
+  /* 好友悬浮名片位置修正 */
+  .hover-card { width: 80%; left: 10% !important; top: 30% !important; position: fixed; }
+}
+
 </style>
 
